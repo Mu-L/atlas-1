@@ -78,7 +78,7 @@ func (s *state) plan(changes []schema.Change) error {
 		return err
 	}
 	if s.PlanOptions.Mode != migrate.PlanModeUnsortedDump {
-		if planned, err = detachCycles(planned); err != nil {
+		if planned, err = s.detachCycles(planned); err != nil {
 			return err
 		}
 		planned = s.sortChanges(planned)
@@ -287,6 +287,7 @@ func (s *state) addTable(add *schema.AddTable) error {
 		}
 	}
 	s.addComments(add, add.T)
+	s.addTableAttrs(add)
 	return nil
 }
 
@@ -339,11 +340,23 @@ func (s *state) modifyTable(modify *schema.ModifyTable) error {
 	)
 	for _, change := range skipAutoChanges(modify.Changes) {
 		switch change := change.(type) {
-		case *schema.AddAttr, *schema.ModifyAttr:
+		case *schema.ModifyAttr:
+			if _, ok := change.From.(*schema.Comment); !ok {
+				alter = append(alter, change)
+				continue
+			}
 			from, to, err := commentChange(change)
 			if err != nil {
 				return err
 			}
+			// Comments are not part of the ALTER command.
+			changes = append(changes, s.tableComment(modify, modify.T, to, from))
+		case *schema.AddAttr:
+			from, to, err := commentChange(change)
+			if err != nil {
+				return err
+			}
+			// Comments are not part of the ALTER command.
 			changes = append(changes, s.tableComment(modify, modify.T, to, from))
 		case *schema.DropAttr:
 			return fmt.Errorf("unsupported change type: %T", change)
@@ -414,8 +427,8 @@ func (s *state) modifyTable(modify *schema.ModifyTable) error {
 			changes = append(changes, &migrate.Change{
 				Source:  change,
 				Comment: fmt.Sprintf("rename an index from %q to %q", change.From.Name, change.To.Name),
-				Cmd:     s.Build("ALTER INDEX").Ident(change.From.Name).P("RENAME TO").Ident(change.To.Name).String(),
-				Reverse: s.Build("ALTER INDEX").Ident(change.To.Name).P("RENAME TO").Ident(change.From.Name).String(),
+				Cmd:     s.Build("ALTER INDEX").SchemaResource(modify.T.Schema, change.From.Name).P("RENAME TO").Ident(change.To.Name).String(),
+				Reverse: s.Build("ALTER INDEX").SchemaResource(modify.T.Schema, change.To.Name).P("RENAME TO").Ident(change.From.Name).String(),
 			})
 		case *schema.ModifyForeignKey:
 			// Foreign-key modification is translated into 2 steps.
@@ -610,6 +623,12 @@ func (s *state) alterTable(t *schema.Table, changes []schema.Change) error {
 					return errors.New("unknown check constraint change")
 				}
 				reverse = append(reverse, &schema.ModifyCheck{
+					From: change.To,
+					To:   change.From,
+				})
+			case *schema.ModifyAttr:
+				s.alterTableAttr(b, change)
+				reverse = append(reverse, &schema.ModifyAttr{
 					From: change.To,
 					To:   change.From,
 				})
@@ -1132,9 +1151,9 @@ func (s *state) index(b *sqlx.Builder, idx *schema.Index) error {
 			})
 		})
 	}
-	// Avoid appending the default behavior, which NULL values are distinct.
-	if n := (IndexNullsDistinct{}); sqlx.Has(idx.Attrs, &n) && !n.V {
-		b.P("NULLS NOT DISTINCT")
+	// Handled separately by the UNIQUE builder.
+	if _, ok := uniqueConst(idx.Attrs); !ok {
+		nullsNotDistinct(b, idx)
 	}
 	if p, ok := indexStorageParams(idx.Attrs); ok {
 		b.P("WITH")
@@ -1209,6 +1228,9 @@ func (s *state) unique(b *sqlx.Builder, idx *schema.Index) error {
 		name = idx.Name
 	}
 	b.P("CONSTRAINT").Ident(name).P("UNIQUE")
+	// In UNIQUE constraints, the NULLS [NOT] DISTINCT
+	// clause is written before the index parts.
+	nullsNotDistinct(b, idx)
 	return s.index(b, idx)
 }
 
@@ -1405,5 +1427,13 @@ func dropConst(c schema.Change) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// nullsNotDistinct handles the NULLS [NOT] DISTINCT clause for indexes.
+func nullsNotDistinct(b *sqlx.Builder, idx *schema.Index) {
+	// Avoid appending the default behavior, which NULL values are distinct.
+	if n := (IndexNullsDistinct{}); sqlx.Has(idx.Attrs, &n) && !n.V {
+		b.P("NULLS NOT DISTINCT")
 	}
 }

@@ -200,6 +200,33 @@ module.exports = {
         },
         {
             type: 'category',
+            label: 'Database-per-Tenant',
+            collapsed: false,
+            items: [
+                {
+                    type: 'doc',
+                    label: 'Introduction',
+                    id: 'guides/database-per-tenant/intro',
+                },
+                {
+                    type: 'doc',
+                    id: 'guides/database-per-tenant/target-groups',
+                    label: 'Target Groups'
+                },
+                {
+                    type: 'doc',
+                    id: 'guides/database-per-tenant/deploying',
+                    label: 'Deploying'
+                },
+                {
+                    type: 'doc',
+                    id: 'guides/database-per-tenant/control-plane',
+                    label: 'Control Plane'
+                }
+            ]
+        },
+        {
+            type: 'category',
             label: 'Deploying schema migrations',
             collapsed: false,
             items: [
@@ -256,6 +283,10 @@ module.exports = {
             ]
         },
         {
+            type: 'doc',
+            id: 'guides/atlas-in-docker',
+        },
+        {
             type: 'category',
             label: 'Testing',
             collapsed: false,
@@ -269,6 +300,36 @@ module.exports = {
                     type: 'doc',
                     id: 'guides/testing/testing-github-actions',
                     label: 'With GitHub Actions'
+                },
+                {
+                    type: 'doc',
+                    id: 'guides/testing/testing-data-migrations',
+                    label: 'Testing Data Migrations'
+                },
+                {
+                    type: 'doc',
+                    id: 'guides/testing/testing-views',
+                    label: 'Testing Views'
+                },
+                {
+                    type: 'doc',
+                    id: 'guides/testing/testing-functions',
+                    label: 'Testing Functions'
+                },
+                {
+                    type: 'doc',
+                    id: 'guides/testing/testing-domains',
+                    label: 'Testing Domains'
+                },
+                {
+                    type: 'doc',
+                    id: 'guides/testing/testing-procedures',
+                    label: 'Testing Stored Procedures'
+                },
+                {
+                    type: 'doc',
+                    id: 'guides/testing/testing-triggers',
+                    label: 'Testing Triggers'
                 }
             ]
         },
@@ -331,9 +392,24 @@ module.exports = {
             collapsed: false,
             items: [
                 {
-                    type: 'doc',
-                    id: 'guides/orms/gorm',
-                    label: 'GORM'
+                    type: 'category',
+                    label: 'GORM',
+                    link: {
+                        type: 'doc',
+                        id: 'guides/orms/gorm',
+                    },
+                    items: [
+                        {type: 'doc', id: 'guides/orms/gorm/getting-started', label: 'Getting Started'},
+                        {type: 'doc', id: 'guides/orms/gorm/program', label: 'Program Mode'},
+                        {type: 'doc', id: 'guides/orms/gorm/standalone', label: 'Standalone Mode'},
+                        {type: 'doc', id: 'guides/orms/gorm/composite-types', label: 'Composite Types'},
+                        {type: 'doc', id: 'guides/orms/gorm/domain-types', label: 'Domain Types'},
+                        {type: 'doc', id: 'guides/orms/gorm/enum-types', label: 'Enum Types'},
+                        {type: 'doc', id: 'guides/orms/gorm/extensions', label: 'Extensions'},
+                        {type: 'doc', id: 'guides/orms/gorm/rls', label: 'Row-Level Security'},
+                        {type: 'doc', id: 'guides/orms/gorm/triggers', label: 'Triggers'},
+                        {type: 'doc', id: 'guides/orms/gorm/visualize', label: 'Visualize'},
+                    ]
                 },
                 {
                     type: 'doc',
@@ -346,9 +422,18 @@ module.exports = {
                     label: 'Hibernate'
                 },
                 {
-                    type: 'doc',
-                    id: 'guides/orms/sequelize',
-                    label: 'Sequelize'
+                    type: 'category',
+                    label: 'Sequelize',
+                    link: {
+                        type: 'doc',
+                        id: 'guides/orms/sequelize',
+                    },
+                    items: [
+                        {type: 'doc', id: 'guides/orms/sequelize/composite-types', label: 'Composite Types'},
+                        {type: 'doc', id: 'guides/orms/sequelize/domain-types', label: 'Domain Types'},
+                        {type: 'doc', id: 'guides/orms/sequelize/rls', label: 'Row-Level Security'},
+                        {type: 'doc', id: 'guides/orms/sequelize/triggers', label: 'Triggers'},
+                    ],
                 },
                 {
                     type: 'doc',
@@ -379,6 +464,11 @@ module.exports = {
                     type: 'doc',
                     id: 'guides/frameworks/sqlc-versioned',
                     label: 'sqlc (versioned)'
+                },
+                {
+                    type: 'doc',
+                    id: 'guides/orms/efcore',
+                    label: 'Entity Framework Core'
                 }
             ]
         },
@@ -522,10 +612,6 @@ module.exports = {
             type: 'doc',
             id: 'guides/getting-started-redshift',
             label: 'Redshift'
-        },
-        {
-            type: 'doc',
-            id: 'guides/ddl'
         },
         {
             type: 'category',

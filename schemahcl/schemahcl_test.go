@@ -433,6 +433,7 @@ env "prod" {
 env "staging" {
   for_each = toset(var.domains)
   url = "${each.value.name}:${each.value.port}"
+  driver = MYSQL
 }
 
 env "dev" {
@@ -445,6 +446,7 @@ env "dev" {
 `)
 	)
 	require.NoError(t, New(
+		WithScopedEnums("env.driver", "MYSQL", "POSTGRES"),
 		WithDataSource("sql", func(_ context.Context, ectx *hcl.EvalContext, b *hclsyntax.Block) (cty.Value, error) {
 			attrs, diags := b.Body.JustAttributes()
 			if diags.HasErrors() {
@@ -1078,9 +1080,31 @@ bar "b1" {
 	}, doc.Bar[0])
 }
 
+func Test_MarshalAttr(t *testing.T) {
+	var doc struct {
+		DefaultExtension
+	}
+	doc.Extra.Attrs = append(
+		doc.Extra.Attrs,
+		StringEnumsAttr("mixed1", &EnumString{S: "string"}, &EnumString{E: "enum"}),
+		StringEnumsAttr("mixed2", &EnumString{E: "enum1"}, &EnumString{E: "enum2"}),
+		StringEnumsAttr("mixed3", &EnumString{S: "string1"}, &EnumString{S: "string1"}),
+	)
+	buf, err := Marshal(&doc)
+	require.NoError(t, err)
+	require.Equal(t, `mixed1 = ["string", enum]
+mixed2 = [enum1, enum2]
+mixed3 = ["string1", "string1"]
+`, string(buf))
+}
+
 func Test_WithPos(t *testing.T) {
 	var (
 		doc struct {
+			Bar struct {
+				A int `spec:"a"`
+				DefaultExtension
+			} `spec:"bar"`
 			DefaultExtension
 		}
 		b = []byte(`
@@ -1091,6 +1115,9 @@ foo {
   }
 }
 baz = 1
+bar {
+  a = 1
+}
 `)
 	)
 	require.NoError(t, New(WithPos()).EvalBytes(b, &doc, nil))
@@ -1103,6 +1130,7 @@ baz = 1
 	require.Equal(t, 3, rs[1].Range().Start.Line)
 	require.Equal(t, 4, rs[1].Children[0].Range().Start.Line)
 	require.Equal(t, 5, rs[1].Children[0].Attrs[0].Range().Start.Line)
+	require.NotNil(t, doc.Bar.Extra.Range(), "position should be attached to the resource")
 }
 
 func TestExtendedBlockDef(t *testing.T) {

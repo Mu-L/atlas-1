@@ -11,10 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"text/template"
+	"time"
 
 	"ariga.io/atlas/cmd/atlas/internal/cloudapi"
 	"ariga.io/atlas/cmd/atlas/internal/cmdext"
+	"ariga.io/atlas/cmd/atlas/internal/cmdlog"
+	"ariga.io/atlas/cmd/atlas/internal/cmdstate"
 	cmdmigrate "ariga.io/atlas/cmd/atlas/internal/migrate"
 	"ariga.io/atlas/cmd/atlas/internal/migratelint"
 	"ariga.io/atlas/schemahcl"
@@ -34,6 +38,7 @@ func init() {
 		schemaDiffCmd(),
 		schemaFmtCmd(),
 		schemaInspectCmd(),
+		unsupportedCommand("schema", "test"),
 	)
 	Root.AddCommand(schemaCmd)
 	migrateCmd := migrateCmd()
@@ -47,17 +52,93 @@ func init() {
 		migrateSetCmd(),
 		migrateStatusCmd(),
 		migrateValidateCmd(),
+		unsupportedCommand("migrate", "checkpoint"),
+		unsupportedCommand("migrate", "down"),
+		unsupportedCommand("migrate", "rebase"),
+		unsupportedCommand("migrate", "rm"),
+		unsupportedCommand("migrate", "edit"),
+		unsupportedCommand("migrate", "push"),
+		unsupportedCommand("migrate", "test"),
 	)
 	Root.AddCommand(migrateCmd)
 }
 
-// Project represents an atlas.hcl project config file.
-type Project struct {
-	Envs  []*Env `spec:"env"`  // List of environments
-	Lint  *Lint  `spec:"lint"` // Optional global lint policy
-	Diff  *Diff  `spec:"diff"` // Optional global diff policy
-	Test  *Test  `spec:"test"` // Optional test configuration
-	cloud *cmdext.AtlasConfig
+// unsupportedCommand create a stub command that reports
+// the command is not supported by this build.
+func unsupportedCommand(cmd, sub string) *cobra.Command {
+	s := fmt.Sprintf(
+		`'atlas %s %s' is not supported by the community version.
+
+To install the non-community version of Atlas, use the following command:
+
+	curl -sSf https://atlasgo.sh | sh
+
+Or, visit the website to see all installation options:
+
+	https://atlasgo.io/docs#installation
+`,
+		cmd, sub,
+	)
+	c := &cobra.Command{
+		Hidden: true,
+		Use:    fmt.Sprintf("%s is not supported by this build", sub),
+		Short:  s,
+		Long:   s,
+		RunE: RunE(func(*cobra.Command, []string) error {
+			return AbortErrorf(s)
+		}),
+	}
+	c.SetHelpTemplate(s + "\n")
+	return c
+}
+
+type (
+	// Project represents an atlas.hcl project config file.
+	Project struct {
+		Envs  []*Env `spec:"env"`  // List of environments
+		Lint  *Lint  `spec:"lint"` // Optional global lint policy
+		Diff  *Diff  `spec:"diff"` // Optional global diff policy
+		Test  *Test  `spec:"test"` // Optional test configuration
+		cloud *cmdext.AtlasConfig
+	}
+)
+
+const (
+	envSkipUpgradeSuggestions = "ATLAS_NO_UPGRADE_SUGGESTIONS"
+	oneWeek                   = 7 * 24 * time.Hour
+)
+
+// maySuggestUpgrade informs the user about the limitations of the community edition to stderr
+// at most once a week. The user can disable this message by setting the ATLAS_NO_UPGRADE_SUGGESTIONS
+// environment variable.
+func maySuggestUpgrade(cmd *cobra.Command) {
+	if os.Getenv(envSkipUpgradeSuggestions) != "" {
+		return
+	}
+	state := cmdstate.File[LocalState]{Name: localStateFile}
+	prev, err := state.Read()
+	if err != nil {
+		return
+	}
+	if time.Since(prev.UpgradeSuggested) < oneWeek {
+		return
+	}
+	s := `Notice: This Atlas edition lacks support for features such as checkpoints,
+testing, down migrations, and more. Additionally, advanced database objects such as views, 
+triggers, and stored procedures are not supported. To read more: https://atlasgo.io/community-edition
+
+To install the non-community version of Atlas, use the following command:
+
+	curl -sSf https://atlasgo.sh | sh
+
+Or, visit the website to see all installation options:
+
+	https://atlasgo.io/docs#installation
+
+`
+	_ = cmdlog.WarnOnce(cmd.ErrOrStderr(), cmdlog.ColorCyan(s))
+	prev.UpgradeSuggested = time.Now()
+	_ = state.Write(prev)
 }
 
 // migrateLintSetFlags allows setting extra flags for the 'migrate lint' command.

@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,7 +48,8 @@ func New(endpoint, token string) *Client {
 		endpoint: endpoint,
 		client: &http.Client{
 			Transport: &roundTripper{
-				token: token,
+				token:        token,
+				extraHeaders: make(map[string]string),
 			},
 			Timeout: time.Second * 30,
 		},
@@ -246,6 +248,9 @@ func (c *Client) ReportMigration(ctx context.Context, input ReportMigrationInput
 	return payload.ReportMigration.URL, nil
 }
 
+// ErrUnauthorized is returned when the server returns a 401 status code.
+var ErrUnauthorized = errors.New(http.StatusText(http.StatusUnauthorized))
+
 func (c *Client) post(ctx context.Context, query string, vars, data any) error {
 	body, err := json.Marshal(struct {
 		Query     string `json:"query"`
@@ -267,7 +272,10 @@ func (c *Client) post(ctx context.Context, query string, vars, data any) error {
 		return err
 	}
 	defer req.Body.Close()
-	if res.StatusCode != http.StatusOK {
+	switch {
+	case res.StatusCode == http.StatusUnauthorized:
+		return ErrUnauthorized
+	case res.StatusCode != http.StatusOK:
 		var v struct {
 			Errors errlist `json:"errors,omitempty"`
 		}
@@ -291,13 +299,23 @@ func (c *Client) post(ctx context.Context, query string, vars, data any) error {
 	return nil
 }
 
+// AddHeader adds a header to the client requests.
+func (c *Client) AddHeader(key, value string) {
+	rt, ok := c.client.Transport.(*roundTripper)
+	if !ok {
+		return
+	}
+	rt.extraHeaders[key] = value
+}
+
 type (
 	// errlist wraps the gqlerror.List to print errors without
 	// extra newlines and prefix info added.
 	errlist gqlerror.List
 	// roundTripper is a http.RoundTripper that adds the Authorization header.
 	roundTripper struct {
-		token string
+		token        string
+		extraHeaders map[string]string
 	}
 )
 
@@ -309,6 +327,9 @@ func (e errlist) Error() string {
 // RoundTrip implements http.RoundTripper.
 func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	SetHeader(req, r.token)
+	for k, v := range r.extraHeaders {
+		req.Header.Set(k, v)
+	}
 	return http.DefaultTransport.RoundTrip(req)
 }
 
@@ -341,6 +362,13 @@ func SetHeader(req *http.Request, token string) {
 }
 
 // UserAgent is the value the CLI uses in the User-Agent HTTP header.
-func UserAgent() string {
-	return fmt.Sprintf("Atlas/%s (%s/%s)", version, runtime.GOOS, runtime.GOARCH)
+func UserAgent(systems ...string) string {
+	sysInfo := runtime.GOOS + "/" + runtime.GOARCH
+	if len(systems) > 0 {
+		systems = slices.DeleteFunc(systems, func(s string) bool {
+			return strings.TrimSpace(s) == ""
+		})
+		sysInfo = strings.Join(slices.Insert(systems, 0, sysInfo), "; ")
+	}
+	return fmt.Sprintf("Atlas/%s (%s)", version, sysInfo)
 }

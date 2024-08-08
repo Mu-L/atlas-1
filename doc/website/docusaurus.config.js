@@ -13,7 +13,7 @@ module.exports = {
   themeConfig: {
     image: "https://og.atlasgo.io/image?title=Schema%20Migration%20Tool%20for%20any%20Language",
     prism: {
-      additionalLanguages: ['hcl', 'java', 'properties', 'gradle', 'php'],
+      additionalLanguages: ['hcl', 'java', 'properties', 'gradle', 'php', 'csharp', 'powershell', 'bash'],
       magicComments: [
         {
           className: 'theme-code-block-highlighted-line',
@@ -80,21 +80,16 @@ module.exports = {
           position: 'left'
         },
         {
-          to: 'support',
-          label: 'Support',
-          position: 'left',
-        },
-        {
-          to: 'https://atlasgo.cloud/?utm_term=topnav',
-          label: 'Cloud',
+          to: 'pricing',
+          label: 'Pricing',
           position: 'left',
         },
       ],
     },
     footer,
     announcementBar: {
-      id: 'announcementBar-14', // Increment on change
-      content: `<strong>Atlas v0.24: Testing framework, Editor Support, and more. </strong><a class="cta" href="https://atlasgo.io/blog/2024/06/13/atlas-v-0-24">Read it here</a>`,
+      id: 'announcementBar-15', // Increment on change
+      content: `<strong>Atlas v0.25: PostgreSQL Row-level Security and more. </strong><a class="cta" href="https://atlasgo.io/blog/2024/07/09/v025-row-level-security">Read it here</a>`,
       isCloseable: true,
     },
   },
@@ -128,8 +123,8 @@ module.exports = {
             from: '/dev-database',
           },
           {
-            to: '/guides/ddl',
-            from: ['/ddl/intro', '/concepts/ddl'],
+            to: '/atlas-schema/hcl',
+            from: ['/ddl/intro', '/concepts/ddl', '/guides/ddl'],
           },
           {
             to: '/atlas-schema/input-variables',
@@ -164,10 +159,6 @@ module.exports = {
             from: '/knowledge/postgres/serial-columns',
           },
           {
-            to: '/guides/ddl',
-            from: '/knowledge/ddl',
-          },
-          {
             to: '/concepts/url',
             from: '/url',
           },
@@ -190,6 +181,14 @@ module.exports = {
           {
             from: '/ui/intro',
             to: '/cloud/getting-started',
+          },
+          {
+            "to": "/declarative/inspect",
+            "from": "/cli/getting-started/inspection",
+          },
+          {
+            "to": "/declarative/apply",
+            "from": "/cli/getting-started/applying-schemas",
           },
         ],
       },

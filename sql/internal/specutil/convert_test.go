@@ -134,6 +134,14 @@ func TestDefault(t *testing.T) {
 			v: cty.NumberFloatVal(-1024.1024),
 			x: "-1024.1024",
 		},
+		{
+			v: cty.StringVal("{}"),
+			x: "{}",
+		},
+		{
+			v: cty.StringVal("1a.1"),
+			x: "1a.1",
+		},
 	} {
 		// From cty.Value (HCL) to database literal.
 		x, err := Default(tt.v)
@@ -144,6 +152,19 @@ func TestDefault(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, tt.v.Equals(v).True())
 	}
+}
+
+func TestColumnDefault_LiteralNumber(t *testing.T) {
+	v, err := ColumnDefault(
+		schema.NewColumn("").SetDefault(&schema.Literal{V: "0"}),
+	)
+	require.NoError(t, err)
+	require.True(t, cty.NumberIntVal(0).Equals(v).True())
+	v, err = ColumnDefault(
+		schema.NewStringColumn("", "text").SetDefault(&schema.Literal{V: "0"}),
+	)
+	require.NoError(t, err)
+	require.True(t, cty.StringVal("0").Equals(v).True())
 }
 
 func TestFromView(t *testing.T) {

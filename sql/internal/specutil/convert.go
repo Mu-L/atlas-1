@@ -680,12 +680,9 @@ func FromView(v *schema.View, colFn ViewColumnSpecFunc, idxFn IndexSpecFunc) (*s
 		}
 		spec.Indexes = append(spec.Indexes, i)
 	}
-	as := normalizeCRLF(v.Def)
 	// In case the view definition is multi-line,
 	// format it as indented heredoc with two spaces.
-	if lines := strings.Split(as, "\n"); len(lines) > 1 {
-		as = fmt.Sprintf("<<-SQL\n  %s\n  SQL", strings.Join(lines, "\n  "))
-	}
+	as := sqlspec.MightHeredoc(v.Def)
 	embed := &schemahcl.Resource{
 		Attrs: []*schemahcl.Attr{
 			schemahcl.StringAttr("as", as),
@@ -706,15 +703,6 @@ func FromView(v *schema.View, colFn ViewColumnSpecFunc, idxFn IndexSpecFunc) (*s
 	convertCommentFromSchema(v.Attrs, &embed.Attrs)
 	spec.Extra.Children = append(spec.Extra.Children, embed)
 	return spec, nil
-}
-
-// normalizeCRLF for heredoc strings that inspected and printed in the HCL as-is to
-// avoid having mixed endings in the printed file - Unix-like (default) and Windows-like.
-func normalizeCRLF(s string) string {
-	if strings.Contains(s, "\r\n") {
-		return strings.ReplaceAll(s, "\r\n", "\n")
-	}
-	return s
 }
 
 // dependsOn returns the depends_on attribute for the given objects.
@@ -918,6 +906,13 @@ func ConvertGenExpr(r *schemahcl.Resource, c *schema.Column, t func(string) stri
 
 // ColumnDefault converts the column default into cty.Value.
 func ColumnDefault(c *schema.Column) (cty.Value, error) {
+	var textlike bool
+	if c.Type != nil {
+		switch c.Type.Type.(type) {
+		case *schema.StringType, *schema.EnumType:
+			textlike = true
+		}
+	}
 	switch x := schema.UnderlyingExpr(c.Default).(type) {
 	case nil:
 		return cty.NilVal, nil
@@ -936,13 +931,14 @@ func ColumnDefault(c *schema.Column) (cty.Value, error) {
 			return cty.StringVal(s), nil
 		case strings.ToLower(x.V) == "true", strings.ToLower(x.V) == "false":
 			return cty.BoolVal(strings.ToLower(x.V) == "true"), nil
-		case strings.Contains(x.V, "."):
-			f, err := strconv.ParseFloat(x.V, 64)
-			if err != nil {
-				return cty.NilVal, err
+		case sqlx.IsLiteralNumber(x.V) && !textlike:
+			if strings.Contains(x.V, ".") {
+				f, err := strconv.ParseFloat(x.V, 64)
+				if err != nil {
+					return cty.NilVal, err
+				}
+				return cty.NumberFloatVal(f), nil
 			}
-			return cty.NumberFloatVal(f), nil
-		case sqlx.IsLiteralNumber(x.V):
 			switch i, err := strconv.ParseInt(x.V, 10, 64); {
 			case errors.Is(err, strconv.ErrRange):
 				u, err := strconv.ParseUint(x.V, 10, 64)
@@ -956,14 +952,8 @@ func ColumnDefault(c *schema.Column) (cty.Value, error) {
 				return cty.NumberIntVal(i), nil
 			}
 		default:
-			switch c.Type.Type.(type) {
-			// Literal values (non-expressions) are returned
-			// as strings for text-like types.
-			case *schema.StringType, *schema.EnumType:
-				return cty.StringVal(x.V), nil
-			default:
-				return cty.NilVal, fmt.Errorf("unsupported literal value %s for column %s", x.V, c.Name)
-			}
+			// Literal values (non-expressions) are returned as strings.
+			return cty.StringVal(x.V), nil
 		}
 	default:
 		return cty.NilVal, fmt.Errorf("converting expr %T to literal value for column %s", x, c.Name)

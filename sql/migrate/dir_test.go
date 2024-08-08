@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"text/template"
 	"time"
 
 	"ariga.io/atlas/sql/migrate"
@@ -529,6 +530,49 @@ func TestDirTar(t *testing.T) {
 	require.Len(t, files, 1)
 	require.Equal(t, "1.sql", files[0].Name())
 	require.Equal(t, "create table t(c int);", string(files[0].Bytes()))
+}
+
+func TestDefaultFormatter_FormatTo(t *testing.T) {
+	var b bytes.Buffer
+	err := migrate.DefaultFormatter.FormatTo(&migrate.Plan{
+		Changes: []*migrate.Change{
+			{Cmd: "create table t1(c int)"},
+			{Cmd: "create table t2(c int)", Comment: "create table"},
+		},
+	}, &b)
+	require.NoError(t, err)
+	require.Equal(t, `create table t1(c int);
+-- Create table
+create table t2(c int);
+`, b.String())
+}
+
+func TestDefaultFormatter_FormatFile(t *testing.T) {
+	f, err := migrate.DefaultFormatter.FormatFile(&migrate.Plan{
+		Changes: []*migrate.Change{
+			{Cmd: "create table t1(c int)"},
+			{Cmd: "create table t2(c int)", Comment: "create table"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, `create table t1(c int);
+-- Create table
+create table t2(c int);
+`, string(f.Bytes()))
+
+	ft := migrate.TemplateFormatter{
+		{
+			N: template.Must(template.New("").Parse("name-1")),
+			C: template.Must(template.New("").Parse("cmd-1")),
+		},
+		{
+			N: template.Must(template.New("").Parse("name-2")),
+			C: template.Must(template.New("").Parse("cmd-2")),
+		},
+	}
+	f, err = ft.FormatFile(&migrate.Plan{})
+	require.Error(t, err, "expect only one file")
+	require.Nil(t, f)
 }
 
 func fileNames(r io.Reader) ([]string, error) {

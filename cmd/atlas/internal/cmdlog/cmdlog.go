@@ -8,14 +8,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
+	cmdmigrate "ariga.io/atlas/cmd/atlas/internal/migrate"
+	"ariga.io/atlas/cmd/atlas/internal/migrate/ent/revision"
 	"ariga.io/atlas/sql/migrate"
 	"ariga.io/atlas/sql/schema"
 	"ariga.io/atlas/sql/sqlclient"
@@ -25,6 +31,7 @@ import (
 
 var (
 	ColorCyan         = color.CyanString
+	ColorGray         = color.New(color.Attribute(90))
 	ColorGreen        = color.HiGreenString
 	ColorRed          = color.HiRedString
 	ColorRedBgWhiteFg = color.New(color.FgHiWhite, color.BgHiRed).SprintFunc()
@@ -185,6 +192,111 @@ func (r *MigrateStatus) FromCheckpoint() bool {
 	ck, ok := r.Pending[0].(migrate.CheckpointFile)
 	return ok && ck.IsCheckpoint()
 }
+
+// StatusReporter is used to gather information about migration status.
+type StatusReporter struct {
+	// Client configures the connection to the database to file a MigrateStatus for.
+	Client *sqlclient.Client
+	// DirURL of the migration directory.
+	DirURL *url.URL
+	// Dir is used for scanning and validating the migration directory.
+	Dir migrate.Dir
+	// Schema name the revision table resides in.
+	Schema string
+}
+
+// Report creates and writes a MigrateStatus.
+func (r *StatusReporter) Report(ctx context.Context) (*MigrateStatus, error) {
+	rep := &MigrateStatus{Env: NewEnv(r.Client, r.DirURL)}
+	// Check if there already is a revision table in the defined schema.
+	// Inspect schema and check if the table does already exist.
+	sch, err := r.Client.InspectSchema(ctx, r.Schema, &schema.InspectOptions{Tables: []string{revision.Table}})
+	if err != nil && !schema.IsNotExistError(err) {
+		return nil, err
+	}
+	if schema.IsNotExistError(err) || func() bool { _, ok := sch.Table(revision.Table); return !ok }() {
+		// Either schema or table does not exist.
+		if rep.Available, err = migrate.FilesFromLastCheckpoint(r.Dir); err != nil {
+			return nil, err
+		}
+		rep.Pending = rep.Available
+	} else {
+		// Both exist, fetch their data.
+		rrw, err := cmdmigrate.RevisionsForClient(ctx, r.Client, r.Schema)
+		if err != nil {
+			return nil, err
+		}
+		if err := rrw.Migrate(ctx); err != nil {
+			return nil, err
+		}
+		ex, err := migrate.NewExecutor(r.Client.Driver, r.Dir, rrw)
+		if err != nil {
+			return nil, err
+		}
+		rep.Applied, err = rrw.ReadRevisions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if rep.Pending, err = ex.Pending(ctx); err != nil && !errors.Is(err, migrate.ErrNoPendingFiles) {
+			if err1 := (*migrate.HistoryNonLinearError)(nil); errors.As(err, &err1) {
+				rep.Error = err1.Error()
+				rep.Status = statusPending
+				rep.Pending = err1.Pending
+				rep.OutOfOrder = err1.OutOfOrder
+				// Non-linear error means at least one file was applied.
+				rep.Current = rep.Applied[len(rep.Applied)-1].Version
+				return rep, nil
+			}
+			return nil, err
+		}
+		// If no files were applied, all pending files are
+		// available. The first one might be a checkpoint.
+		if len(rep.Applied) == 0 {
+			rep.Available = rep.Pending
+		} else if rep.Available, err = r.Dir.Files(); err != nil {
+			return nil, err
+		}
+	}
+	switch len(rep.Pending) {
+	case len(rep.Available):
+		rep.Current = "No migration applied yet"
+	default:
+		rep.Current = rep.Applied[len(rep.Applied)-1].Version
+	}
+	if len(rep.Pending) == 0 {
+		rep.Status = statusOK
+		rep.Next = "Already at latest version"
+	} else {
+		rep.Status = statusPending
+		rep.Next = rep.Pending[0].Version()
+	}
+	// If the last one is partially applied (and not manually resolved).
+	if len(rep.Applied) != 0 {
+		last := rep.Applied[len(rep.Applied)-1]
+		if !last.Type.Has(migrate.RevisionTypeResolved) && last.Applied < last.Total {
+			rep.SQL = strings.ReplaceAll(last.ErrorStmt, "\n", " ")
+			rep.Error = strings.ReplaceAll(last.Error, "\n", " ")
+			rep.Count = last.Applied
+			idx := migrate.FilesLastIndex(rep.Available, func(f migrate.File) bool {
+				return f.Version() == last.Version
+			})
+			if idx == -1 {
+				return nil, fmt.Errorf("migration file with version %q not found", last.Version)
+			}
+			stmts, err := migrate.FileStmts(r.Client.Driver, rep.Available[idx])
+			if err != nil {
+				return nil, err
+			}
+			rep.Total = len(stmts)
+		}
+	}
+	return rep, nil
+}
+
+const (
+	statusOK      = "OK"
+	statusPending = "PENDING"
+)
 
 // MigrateSetTemplate holds the default template of the 'migrate set' command.
 var MigrateSetTemplate = template.Must(template.New("set").
@@ -812,38 +924,7 @@ func (s *SchemaInspect) MarshalSQL(indent ...string) (string, error) {
 }
 
 func sqlInspect(report *SchemaInspect, indent ...string) (string, error) {
-	var changes schema.Changes
-	for _, o := range report.Realm.Objects {
-		changes = append(changes, &schema.AddObject{O: o})
-	}
-	for _, s := range report.Realm.Schemas {
-		// Generate commands for creating the schemas on realm-mode.
-		if report.client.URL.Schema == "" {
-			changes = append(changes, &schema.AddSchema{S: s})
-		}
-		for _, o := range s.Objects {
-			changes = append(changes, &schema.AddObject{O: o})
-		}
-		for _, t := range s.Tables {
-			changes = append(changes, &schema.AddTable{T: t})
-			for _, r := range t.Triggers {
-				changes = append(changes, &schema.AddTrigger{T: r})
-			}
-		}
-		for _, v := range s.Views {
-			changes = append(changes, &schema.AddView{V: v})
-			for _, r := range v.Triggers {
-				changes = append(changes, &schema.AddTrigger{T: r})
-			}
-		}
-		for _, f := range s.Funcs {
-			changes = append(changes, &schema.AddFunc{F: f})
-		}
-		for _, p := range s.Procs {
-			changes = append(changes, &schema.AddProc{P: p})
-		}
-	}
-	return fmtPlan(report.ctx, report.client, changes, indent)
+	return fmtPlan(report.ctx, report.client, cmdmigrate.ChangesToRealm(report.client, report.Realm), indent)
 }
 
 // SchemaDiff contains a summary of the 'schema diff' command.
@@ -894,13 +975,13 @@ func sqlDiff(diff *SchemaDiff, indent ...string) (string, error) {
 	return fmtPlan(diff.ctx, diff.client, diff.Changes, indent)
 }
 
-func fmtPlan(ctx context.Context, client *sqlclient.Client, changes schema.Changes, indent []string) (string, error) {
+func fmtPlan(ctx context.Context, client *sqlclient.Client, changes schema.Changes, indent []string, edit ...func(*migrate.Plan)) (string, error) {
 	if len(indent) > 1 {
 		return "", fmt.Errorf("unexpected number of arguments: %d", len(indent))
 	}
 	plan, err := client.PlanChanges(ctx, "plan", changes, func(o *migrate.PlanOptions) {
 		o.Mode = migrate.PlanModeDump
-		// Disable tables qualifier in schema-mode.
+		// Disable object qualifier in schema-mode.
 		if client.URL.Schema != "" {
 			o.SchemaQualifier = new(string)
 		}
@@ -911,14 +992,15 @@ func fmtPlan(ctx context.Context, client *sqlclient.Client, changes schema.Chang
 	if err != nil {
 		return "", err
 	}
-	switch files, err := migrate.DefaultFormatter.Format(plan); {
-	case err != nil:
-		return "", err
-	case len(files) != 1:
-		return "", fmt.Errorf("unexpected number of files: %d", len(files))
-	default:
-		return string(files[0].Bytes()), nil
+	// Optional edit functions.
+	for i := range edit {
+		edit[i](plan)
 	}
+	f, err := migrate.DefaultFormatter.FormatFile(plan)
+	if err != nil {
+		return "", err
+	}
+	return string(f.Bytes()), nil
 }
 
 func mermaid(i *SchemaInspect, _ ...string) (string, error) {
@@ -1042,3 +1124,20 @@ func indentLn(input string, indent int) string {
 	pad := strings.Repeat(" ", indent)
 	return strings.ReplaceAll(input, "\n", "\n"+pad)
 }
+
+// WarnOnce allow writing warning messages to the given writer,
+// but ensures only one message will be written in process run.
+func WarnOnce(w io.Writer, text string) error {
+	if !reflect.TypeOf(w).Comparable() {
+		_, err := w.Write([]byte(text))
+		return err
+	}
+	if _, loaded := oneWrites.LoadOrStore(w, true); !loaded {
+		_, err := w.Write([]byte(text))
+		return err
+	}
+	return nil
+}
+
+// oneWrites per writer.
+var oneWrites sync.Map

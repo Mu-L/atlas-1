@@ -54,6 +54,7 @@ func FormatType(t schema.Type) (string, error) {
 		f = t.T
 	case *schema.IntegerType:
 		switch f = strings.ToLower(t.T); f {
+		case TypeXID, TypeXID8:
 		case TypeSmallInt, TypeInteger, TypeBigInt:
 		case TypeInt2:
 			f = TypeSmallInt
@@ -214,7 +215,7 @@ func ParseType(typ string) (schema.Type, error) {
 func columnType(c *columnDesc) (schema.Type, error) {
 	var typ schema.Type
 	switch t := c.typ; strings.ToLower(t) {
-	case TypeBigInt, TypeInt8, TypeInt, TypeInteger, TypeInt4, TypeSmallInt, TypeInt2, TypeInt64:
+	case TypeBigInt, TypeInt8, TypeInt, TypeInteger, TypeInt4, TypeSmallInt, TypeInt2, TypeInt64, TypeXID, TypeXID8:
 		typ = &schema.IntegerType{T: t}
 	case TypeBit, TypeBitVar:
 		typ = &BitType{T: t, Len: c.size}
@@ -288,13 +289,16 @@ func columnType(c *columnDesc) (schema.Type, error) {
 	case typeOID, typeRegClass, typeRegCollation, typeRegConfig, typeRegDictionary, typeRegNamespace,
 		typeRegOper, typeRegOperator, typeRegProc, typeRegProcedure, typeRegRole, typeRegType:
 		typ = &OIDType{T: t}
-	case TypeUserDefined:
-		typ = &UserDefinedType{T: c.fmtype}
 	case typeAny, typeAnyElement, typeAnyArray, typeAnyNonArray, typeAnyEnum, typeInternal,
 		typeRecord, typeTrigger, typeEventTrigger, typeVoid, typeUnknown:
 		typ = &PseudoType{T: t}
+	// TypeUserDefined or any other base type.
 	default:
-		typ = &schema.UnsupportedType{T: t}
+		ft := c.fmtype
+		if ft == "" {
+			ft = t
+		}
+		typ = &UserDefinedType{T: ft}
 	}
 	switch c.typtype {
 	case "d", "e":

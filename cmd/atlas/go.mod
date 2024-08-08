@@ -1,31 +1,31 @@
 module ariga.io/atlas/cmd/atlas
 
-go 1.22.3
-
-toolchain go1.22.4
+go 1.22.5
 
 replace ariga.io/atlas => ../..
 
 require (
 	ariga.io/atlas v0.19.1-0.20240203083654-5948b60a8e43
-	entgo.io/ent v0.13.0
+	entgo.io/ent v0.13.2-0.20240728160047-15bebe8d8920
 	github.com/1lann/promptui v0.8.1-0.20220708222609-81fad96dd5e1
 	github.com/antlr4-go/antlr/v4 v4.13.0
 	github.com/aws/aws-sdk-go-v2/config v1.26.1
 	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.2.16
+	github.com/chzyer/readline v1.5.1
 	github.com/fatih/color v1.13.0
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/hcl/v2 v2.13.0
 	github.com/lib/pq v1.10.9
 	github.com/libsql/libsql-client-go v0.0.0-20230602133133-5905f0c4f8a5
+	github.com/mattn/go-isatty v0.0.18
 	github.com/mattn/go-sqlite3 v1.14.16
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/pganalyze/pg_query_go/v5 v5.1.0
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.5
-	github.com/stretchr/testify v1.8.4
-	github.com/vektah/gqlparser/v2 v2.5.1
+	github.com/stretchr/testify v1.9.0
+	github.com/vektah/gqlparser/v2 v2.5.16
 	github.com/zclconf/go-cty v1.14.4
 	gocloud.dev v0.36.0
 	golang.org/x/exp v0.0.0-20230515195305-f3d0a9c9a5cc
@@ -59,7 +59,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.21.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.26.5 // indirect
 	github.com/aws/smithy-go v1.19.0 // indirect
-	github.com/chzyer/readline v1.5.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-openapi/inflect v0.19.0 // indirect
@@ -76,7 +75,6 @@ require (
 	github.com/kr/pretty v0.3.0 // indirect
 	github.com/libsql/sqlite-antlr4-parser v0.0.0-20230512205400-b2348f0d1196 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
-	github.com/mattn/go-isatty v0.0.18 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.0 // indirect
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect

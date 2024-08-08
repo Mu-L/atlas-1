@@ -23,6 +23,7 @@ import (
 	"ariga.io/atlas/sql/sqlclient"
 
 	"github.com/1lann/promptui"
+	"github.com/chzyer/readline"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/spf13/cobra"
 )
@@ -185,6 +186,7 @@ func schemaApplyRun(cmd *cobra.Command, flags schemaApplyFlags, env *Env) error 
 	if err != nil {
 		return err
 	}
+	maySuggestUpgrade(cmd)
 	// Returning at this stage should
 	// not trigger the help message.
 	cmd.SilenceUsage = true
@@ -437,6 +439,7 @@ func schemaDiffRun(cmd *cobra.Command, _ []string, flags schemaDiffFlags, env *E
 	if err != nil {
 		return err
 	}
+	maySuggestUpgrade(cmd)
 	return format.Execute(cmd.OutOrStdout(),
 		cmdlog.NewSchemaDiff(ctx, c, diff.from, diff.to, diff.changes),
 	)
@@ -543,6 +546,7 @@ func schemaInspectRun(cmd *cobra.Command, _ []string, flags schemaInspectFlags, 
 	if err != nil {
 		return err
 	}
+	maySuggestUpgrade(cmd)
 	return format.Execute(cmd.OutOrStdout(), cmdlog.NewSchemaInspect(ctx, client, s))
 }
 
@@ -630,9 +634,6 @@ func setSchemaEnvFlags(cmd *cobra.Command, env *Env) error {
 	if err := inputValuesFromEnv(cmd, env); err != nil {
 		return err
 	}
-	if err := maySetFlag(cmd, flagURL, env.URL); err != nil {
-		return err
-	}
 	if err := maySetFlag(cmd, flagDevURL, env.DevURL); err != nil {
 		return err
 	}
@@ -640,11 +641,7 @@ func setSchemaEnvFlags(cmd *cobra.Command, env *Env) error {
 	if err != nil {
 		return err
 	}
-	for i, s := range srcs {
-		if !isURL(s) {
-			srcs[i] = "file://" + s
-		}
-	}
+	srcs = fixFileURLs(srcs)
 	if err := maySetFlag(cmd, flagFile, strings.Join(srcs, ",")); err != nil {
 		return err
 	}
@@ -655,11 +652,21 @@ func setSchemaEnvFlags(cmd *cobra.Command, env *Env) error {
 		return err
 	}
 	switch cmd.Name() {
+	case "clean":
+		if err := maySetFlag(cmd, flagURL, env.URL); err != nil {
+			return err
+		}
 	case "inspect":
+		if err := maySetFlag(cmd, flagURL, env.URL); err != nil {
+			return err
+		}
 		if err := maySetFlag(cmd, flagFormat, env.Format.Schema.Inspect); err != nil {
 			return err
 		}
 	case "apply":
+		if err := maySetFlag(cmd, flagURL, env.URL); err != nil {
+			return err
+		}
 		if err := maySetFlag(cmd, flagFormat, env.Format.Schema.Apply); err != nil {
 			return err
 		}
@@ -668,11 +675,16 @@ func setSchemaEnvFlags(cmd *cobra.Command, env *Env) error {
 			return err
 		}
 	case "push":
-		if err := maySetFlag(cmd, flagTo, strings.Join(srcs, ",")); err != nil {
+		if err := maySetFlag(cmd, flagURL, strings.Join(srcs, ",")); err != nil {
 			return err
 		}
 	case "test":
-		if err := maySetFlag(cmd, flagURL, strings.Join(srcs, ",")); err != nil {
+		// Give the "src" precedence over the "url" argument.
+		if len(srcs) > 0 {
+			if err := maySetFlag(cmd, flagURL, strings.Join(srcs, ",")); err != nil {
+				return err
+			}
+		} else if err := maySetFlag(cmd, flagURL, env.URL); err != nil {
 			return err
 		}
 	}
@@ -747,7 +759,7 @@ func cmdPrompt(cmd *cobra.Command) *promptui.Select {
 		Label:    "Are you sure?",
 		HideHelp: true,
 		Stdin:    io.NopCloser(cmd.InOrStdin()),
-		Stdout:   nopCloser{cmd.OutOrStdout()},
+		Stdout:   nopBellCloser{cmd.OutOrStdout()},
 	}
 }
 
@@ -762,9 +774,16 @@ func promptUser(cmd *cobra.Command) bool {
 	return result == answerApply
 }
 
-type nopCloser struct{ io.Writer }
+type nopBellCloser struct{ io.Writer }
 
-func (nopCloser) Close() error { return nil }
+func (n nopBellCloser) Write(p []byte) (int, error) {
+	if len(p) == 1 && p[0] == readline.CharBell {
+		return 0, nil // Skip bell noise.
+	}
+	return n.Writer.Write(p)
+}
+
+func (nopBellCloser) Close() error { return nil }
 
 func tasks(path string) ([]fmttask, error) {
 	var tasks []fmttask
@@ -819,4 +838,15 @@ func fmtFile(task fmttask) (bool, error) {
 		return true, os.WriteFile(task.path, formatted, task.info.Mode())
 	}
 	return false, nil
+}
+
+// fixFileURLs converts all file paths to a URL format, if not already.
+// For example, "schema.hcl" to "file://schema.hcl".
+func fixFileURLs(src []string) []string {
+	for i, s := range src {
+		if !isURL(s) {
+			src[i] = "file://" + s
+		}
+	}
+	return src
 }

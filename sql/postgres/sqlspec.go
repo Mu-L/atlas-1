@@ -34,6 +34,7 @@ type (
 		Procs         []*sqlspec.Func     `spec:"procedure"`
 		Aggregates    []*aggregate        `spec:"aggregate"`
 		Triggers      []*sqlspec.Trigger  `spec:"trigger"`
+		Policies      []*policy           `spec:"policy"`
 		EventTriggers []*eventTrigger     `spec:"event_trigger"`
 		Extensions    []*extension        `spec:"extension"`
 		Schemas       []*sqlspec.Schema   `spec:"schema"`
@@ -105,6 +106,15 @@ type (
 		// are appended after the function arguments.
 		schemahcl.DefaultExtension
 	}
+
+	// Policy defines row-level security policy for a table.
+	// See: https://www.postgresql.org/docs/current/view-pg-policies.html.
+	policy struct {
+		Name string         `spec:",name"`
+		On   *schemahcl.Ref `spec:"on"`
+		// Rest of the attributes are appended after the table reference.
+		schemahcl.DefaultExtension
+	}
 )
 
 // merge merges the doc d1 into d.
@@ -121,6 +131,7 @@ func (d *doc) merge(d1 *doc) {
 	d.Sequences = append(d.Sequences, d1.Sequences...)
 	d.Extensions = append(d.Extensions, d1.Extensions...)
 	d.Triggers = append(d.Triggers, d1.Triggers...)
+	d.Policies = append(d.Policies, d1.Policies...)
 	d.EventTriggers = append(d.EventTriggers, d1.EventTriggers...)
 	d.Materialized = append(d.Materialized, d1.Materialized...)
 }
@@ -188,6 +199,7 @@ func (a *aggregate) SchemaRef() *schemahcl.Ref { return a.Schema }
 func init() {
 	schemahcl.Register("enum", &enum{})
 	schemahcl.Register("domain", &domain{})
+	schemahcl.Register("policy", &policy{})
 	schemahcl.Register("composite", &composite{})
 	schemahcl.Register("aggregate", &aggregate{})
 	schemahcl.Register("extension", &extension{})
@@ -212,6 +224,9 @@ func evalSpec(p *hclparse.Parser, v any, input map[string]cty.Value) error {
 			return err
 		}
 		if err := convertSequences(d.Tables, d.Sequences, v); err != nil {
+			return err
+		}
+		if err := convertPolicies(d.Tables, d.Policies, v); err != nil {
 			return err
 		}
 		if err := convertExtensions(d.Extensions, v); err != nil {
@@ -244,6 +259,9 @@ func evalSpec(p *hclparse.Parser, v any, input map[string]cty.Value) error {
 		if err := convertSequences(d.Tables, d.Sequences, r); err != nil {
 			return err
 		}
+		if err := convertPolicies(d.Tables, d.Policies, r); err != nil {
+			return err
+		}
 		// Extensions are skipped in schema scope.
 		if err := normalizeRealm(r); err != nil {
 			return err
@@ -271,6 +289,9 @@ func MarshalSpec(v any, marshaler schemahcl.Marshaler) ([]byte, error) {
 		}
 		ts = trs
 		d.merge(d1)
+		if err := schemasObjectSpec(&d, rv); err != nil {
+			return nil, err
+		}
 	case *schema.Realm:
 		for _, s := range rv.Schemas {
 			d1, trs, err := schemaSpec(s)
@@ -314,9 +335,6 @@ func MarshalSpec(v any, marshaler schemahcl.Marshaler) ([]byte, error) {
 			return nil, err
 		}
 		if err := specutil.QualifyReferences(d.Tables, rv); err != nil {
-			return nil, err
-		}
-		if err := qualifySeqRefs(d.Sequences, d.Tables, rv); err != nil {
 			return nil, err
 		}
 	default:
@@ -374,6 +392,9 @@ func convertTable(spec *sqlspec.Table, parent *schema.Schema) (*schema.Table, er
 		return nil, err
 	}
 	if err := convertPartition(spec.Extra, t); err != nil {
+		return nil, err
+	}
+	if err := convertTableAttrs(spec, t); err != nil {
 		return nil, err
 	}
 	return t, nil
@@ -782,6 +803,7 @@ func tableSpec(t *schema.Table) (*sqlspec.Table, error) {
 	if p := (Partition{}); sqlx.Has(t.Attrs, &p) {
 		spec.Extra.Children = append(spec.Extra.Children, fromPartition(p))
 	}
+	tableAttrsSpec(t, spec)
 	return spec, nil
 }
 
@@ -1010,6 +1032,8 @@ var TypeRegistry = schemahcl.NewRegistry(
 		schemahcl.NewTypeSpec(TypeDateRange),
 		schemahcl.NewTypeSpec(TypeDateMultiRange),
 		schemahcl.NewTypeSpec("hstore"),
+		schemahcl.NewTypeSpec(TypeXID),
+		schemahcl.NewTypeSpec(TypeXID8),
 	),
 	// PostgreSQL internal, pseudo, and special types.
 	schemahcl.WithSpecs(func() (specs []*schemahcl.TypeSpec) {

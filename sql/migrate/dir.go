@@ -431,6 +431,21 @@ func (d *MemDir) WriteFile(name string, data []byte) error {
 	return nil
 }
 
+// CopyFiles copies all files to the MemDir and update the
+// atlas.sum file, or create it if it does not exist.
+func (d *MemDir) CopyFiles(fs []File) error {
+	for _, f := range fs {
+		if err := d.WriteFile(f.Name(), f.Bytes()); err != nil {
+			return err
+		}
+	}
+	sum, err := NewHashFile(fs)
+	if err != nil {
+		return err
+	}
+	return WriteSumFile(d, sum)
+}
+
 // WriteCheckpoint is like WriteFile, but marks the file as a checkpoint file.
 func (d *MemDir) WriteCheckpoint(name, tag string, b []byte) error {
 	var (
@@ -483,11 +498,16 @@ func (d *MemDir) Checksum() (HashFile, error) {
 	return NewHashFile(files)
 }
 
+// NewVersion generates a new migration version.
+func NewVersion() string {
+	return time.Now().UTC().Format("20060102150405")
+}
+
 var (
 	// templateFunc contains the template.FuncMap for the DefaultFormatter.
 	templateFuncs = template.FuncMap{
 		"upper": strings.ToUpper,
-		"now":   func() string { return time.Now().UTC().Format("20060102150405") },
+		"now":   NewVersion,
 	}
 	// DefaultFormatter is a default implementation for Formatter.
 	DefaultFormatter = TemplateFormatter{
@@ -539,6 +559,32 @@ func (t TemplateFormatter) Format(plan *Plan) ([]File, error) {
 		})
 	}
 	return files, nil
+}
+
+// FormatFile is like Format, but expects and returns a single file.
+func (t TemplateFormatter) FormatFile(p *Plan) (File, error) {
+	files, err := t.Format(p)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) != 1 {
+		return nil, fmt.Errorf("expected a single file, got %d", len(files))
+	}
+	return files[0], nil
+}
+
+// FormatTo calls Format and writes the files' content to the given writer.
+func (t TemplateFormatter) FormatTo(plan *Plan, w io.Writer) error {
+	files, err := t.Format(plan)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if _, err := w.Write(f.Bytes()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // HashFileName of the migration directory integrity sum file.

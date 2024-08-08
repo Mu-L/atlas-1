@@ -7,7 +7,7 @@ slug: /atlas-schema/hcl
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-Atlas schemas can be defined in SQL, external ORMs and programs, or by using the [Atlas HCL](/guides/ddl.md#hcl) language.
+Atlas schemas can be defined in SQL, external ORMs and programs, or by using the Atlas HCL language.
 The HCL-based language allows developers to describe database schemas in a declarative manner, and it supports all SQL
 features supported by Atlas. The main advantages of using HCL are that it enables developers to manage their database
 schemas like regular code, facilitates sharing and reusing files between projects, allows variable injection, and
@@ -155,11 +155,8 @@ table "products" {
 
 ### Partitions
 
-Table partitioning refers to splitting logical large tables into smaller physical ones.
-
-:::note
-Partitions are currently supported only by the PostgreSQL driver. Support for the remaining drivers will be added in future versions.
-:::
+The `partition` option is a PostgreSQL-specific option that allows defining table partitioning. Table partitioning refers
+to splitting logical large tables into smaller physical ones.
 
 ```hcl
 table "logs" {
@@ -170,10 +167,12 @@ table "logs" {
   column "text" {
     type = integer
   }
+  // highlight-start
   partition {
     type = RANGE
     columns = [column.date]
   }
+  // highlight-end
 }
 
 table "metrics" {
@@ -184,6 +183,7 @@ table "metrics" {
   column "y" {
     type = integer
   }
+  // highlight-start
   partition {
     type = RANGE
     by {
@@ -193,10 +193,55 @@ table "metrics" {
       expr = "floor(y)"
     }
   }
+  // highlight-end
 }
 ```
 
-### Storage Engine
+### Row Level Security
+
+The `row_security` option is a PostgreSQL-specific option that allows enabling row-level security policies for a table.
+
+```hcl
+table "users" {
+  schema = schema.public
+  column "id" {
+    type = int
+  }
+  // highlight-start
+  row_security {
+    enabled  = true // ENABLE ROW LEVEL SECURITY
+    enforced = true // FORCE ROW LEVEL SECURITY
+  }
+  // highlight-end
+}
+```
+
+:::note Defining Policies
+To define row-level security policies for a table, refer to the [policy](#row-level-security-policy) example.
+:::
+
+### Table Qualification
+
+In some cases, an Atlas DDL document may contain multiple tables of the same name. This usually happens
+when the same table name appears in two different schemas. In these cases, the table names must be
+disambiguated by using resource qualifiers. The following document describes a
+database that contains two schemas named `a` and `b`, and both of them contain a table named `users`.
+
+```hcl
+schema "a" {}
+schema "b" {}
+
+table "a" "users" {
+  schema = schema.a
+  // .. columns
+}
+table "b" "users" {
+  schema = schema.b
+  // .. columns
+}
+```
+
+#### Storage Engine
 
 The `engine` attribute allows for overriding the default storage engine of the table. Supported by MySQL and MariaDB.
 
@@ -220,91 +265,88 @@ table "orders" {
 }
 ```
 
-### Table Qualification
+#### System-Versioned Tables
 
-In some cases, an Atlas DDL document may contain multiple tables of the same name. This usually happens
-when the same table name appears in two different schemas. In these cases, the table names must be
-disambiguated by using resource [qualifiers](/guides/ddl.md#qualifiers). The following document describes a
-database that contains two schemas named `a` and `b`, and both of them contain a table named `users`.
+The `system_versioned` attribute allows marking a table as a [system-versioned table](https://mariadb.com/kb/en/system-versioned-tables/).
+Supported by MariaDB.
+
+:::info [Atlas Pro Feature](/features#pro-plan)
+System-Versioned tables are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
+```
+atlas login
+```
+:::
 
 ```hcl
-schema "a" {}
-schema "b" {}
-
-table "a" "users" {
-  schema = schema.a
-  // .. columns
-}
-table "b" "users" {
-  schema = schema.b
-  // .. columns
+table "f" {
+  schema = schema.public
+  column "id" {
+    type = int
+  }
+  // ...
+  //highlight-next-line
+  system_versioned = true
 }
 ```
 
-### Distribution
+#### Distribution
 
-The `distribution` attribute allows for specifying the distribution method of the table.
-
-:::note
-Distribution is currently supported only by the Redshift driver. Support for the remaining drivers will be added in future versions.
-:::
-
-<Tabs>
-<TabItem label="Redshift" value="redshift">
+The `distribution` block is a Redshift-specific option that allows specifying the distribution method of the table.
 
 ```hcl
 table "users" {
   schema = schema.public
-  // highlight-next-line
   column "id" {
     type = int
   }
+  // highlight-start
   distribution {
-    style = KEY // EVEN | ALL | AUTO
+    style = KEY     // EVEN | ALL | AUTO
     key = column.id // only for KEY style
   }
+  // highlight-end
 }
 ```
 
-</TabItem>
-</Tabs>
 
-### Sorting
+#### Sorting
 
-The `sort` attribute allows for specifying the sorting method of the table.
-
-:::note
-Sorting is currently supported only by the Redshift driver. Support for the remaining drivers will be added in future versions.
-:::
-
-<Tabs>
-<TabItem label="Redshift" value="redshift">
+The `sort` block is a Redshift-specific option that allows specifying the sorting method of the table.
 
 ```hcl
 table "users" {
   schema = schema.public
-  // highlight-next-line
   column "id" {
     type = int
   }
+  // highlight-start
   sort {
     style = COMPOUND // INTERLEAVED | COMPOUND | AUTO
     columns = [column.id]
   }
+  // highlight-end
 }
 
 ```
 
-</TabItem>
-</Tabs>
+:::info Sorting Style `AUTO`
+Redshift restricts user access to certain external tables which are used to inspect the sort style.
+Therefore, Atlas will ignore differences when changing the style to `AUTO`.
+You will need to manually adjust the sort style on your target Redshift database after modifying it in the Atlas schema.
+
+To change the sort style to `AUTO`, run the following SQL command:
+```sql
+ALTER TABLE "my_table" ALTER SORTKEY AUTO;
+```
+:::
 
 ## View
 
 A `view` is a virtual table in the database, defined by a statement that queries rows from one or more existing
 tables or views.
 
-:::info LOGIN REQUIRED
-Views are currently available to logged-in users only. To use this feature, run:
+:::info [Atlas Pro Feature](/features#pro-plan)
+Views are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
 ```
 atlas login
 ```
@@ -342,13 +384,90 @@ view "comedies" {
 }
 ```
 
+
+:::info <a class="sticky-anchor" id={"#testing-views"} href={"#testing-views"}>Testing Views</a>
+
+Atlas's testing framework allows you to write unit tests for your views. The following example demonstrates how
+to write tests for the `clean_users` view defined above. For more detail, read the [schema testing docs](/testing/schema)
+or see the [full example](/guides/testing/views).
+
+<Tabs>
+<TabItem label="Simple Test" value="simple">
+
+```hcl title="schema.test.hcl"
+test "schema" "view" {
+  # Seeding to test view.
+  exec {
+    sql = "INSERT INTO users (id, name) VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie');"
+  }
+  log {
+    message = "Seeded the database"
+  }
+  # Expected exec to pass.
+  exec {
+    sql = <<SQL
+    SELECT id, name
+    FROM clean_users;
+    SQL
+  }
+  log {
+    message = "Tested the view"
+  }
+  # Validates data.
+  exec {
+    sql = "SELECT id, name FROM clean_users;"
+    format = table
+    output = <<TAB
+ id |  name
+----+---------
+ 1  | Alice
+ 2  | Bob
+ 3  | Charlie
+TAB
+  }
+  log {
+    message = "Table is as expected"
+  }
+}
+```
+
+</TabItem>
+<TabItem label="Table-driven Test" value="table-driven">
+
+```hcl title="schema.test.hcl"
+test "schema" "view" {
+  for_each = [
+    {id = 1, name = "Alice"},
+    {id = 2, name = "Bob"},
+    {id = 3, name = "Charlie"}
+  ]
+  # Seed the `users` table.
+  exec {
+    sql = "INSERT INTO users (id, name) VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie');"
+  }
+  # Query the `clean_users` view.
+  exec {
+    sql = "SELECT id, name FROM clean_users WHERE id IN (1, 2, 3);"
+  }
+  # Check each ID returns the right user.
+  log {
+    message = "Testing ${each.value.id} -> ${each.value.name}"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+:::
+
 ## Materialized View
 
 A `materialized` view is a table-like structure that holds the results of a query. Unlike a regular view, the results of
 a materialized view are stored in the database and can be refreshed periodically to reflect changes in the underlying data.
 
-:::info LOGIN REQUIRED
-Materialized views are currently available to logged-in users only. To use this feature, run:
+:::info [Atlas Pro Feature](/features#pro-plan)
+Materialized views are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
 ```
 atlas login
 ```
@@ -386,7 +505,7 @@ materialized "mat_view" {
 </TabItem>
 <TabItem label="Clickhouse" value="clickhouse">
 
-When creating materialized views with `TO [db.]table`, 
+When creating materialized views with `TO [db.]table`,
 the view will be created with the same structure as the table or view specified in the `TO` clause.
 ```hcl
 materialized "mat_view" {
@@ -420,7 +539,7 @@ materialized "mat_view" {
 ```
 
 :::info
-Note that modifying the materialized view structure 
+Note that modifying the materialized view structure
 after the initial creation is not supported by Atlas currently.
 :::
 
@@ -642,7 +761,7 @@ primary_key {
 
 :::info
 Note, primary key expressions are supported by ClickHouse.
-::: 
+:::
 
 ```hcl
 primary_key {
@@ -953,8 +1072,8 @@ exclude "excl_speaker_during" {
 
 ## Trigger
 
-:::info LOGIN REQUIRED
-Triggers are currently available to logged-in users only. To use this feature, run:
+:::info [Atlas Pro Feature](/features#pro-plan)
+Triggers are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
 ```
 atlas login
 ```
@@ -1112,11 +1231,10 @@ trigger "audit_log_trigger" {
 }
 ```
 
-
 ## Event Trigger
 
-:::info LOGIN REQUIRED
-Event Triggers are currently available to logged-in users only. To use this feature, run:
+:::info [Atlas Pro Feature](/features#pro-plan)
+Event Triggers are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
 ```
 atlas login
 ```
@@ -1142,8 +1260,8 @@ event_trigger "record_table_creation" {
 
 ## Function
 
-:::info LOGIN REQUIRED
-Functions are currently available to logged-in users only. To use this feature, run:
+:::info [Atlas Pro Feature](/features#pro-plan)
+Functions are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
 ```
 atlas login
 ```
@@ -1341,10 +1459,11 @@ function "fn_return_table" {
 </TabItem>
 </Tabs>
 
-:::info <a class="sticky-anchor" id={"scope"} href={"#testing-functions"}>Testing Functions</a>
+:::info <a class="sticky-anchor" id={"#testing-functions"} href={"#testing-functions"}>Testing Functions</a>
 
-Atlas testing framework allows you to write unit tests for your functions. The following example demonstrates how
-to write tests for the `positive` function defined above. For more detail, read the [schema testing docs](/testing/schema).
+Atlas's testing framework allows you to write unit tests for your functions. The following example demonstrates how
+to write tests for the `positive` function defined above. For more detail, read the [schema testing docs](/testing/schema)
+or see the [full example](/guides/testing/functions).
 
 
 <Tabs>
@@ -1426,8 +1545,8 @@ function "sum_squares_sfunc" {
 
 ## Procedure
 
-:::info LOGIN REQUIRED
-Procedures are currently available to logged-in users only. To use this feature, run:
+:::info [Atlas Pro Feature](/features#pro-plan)
+Procedures are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
 ```
 atlas login
 ```
@@ -1592,10 +1711,93 @@ procedure "p8" {
 </TabItem>
 </Tabs>
 
+
+:::info <a class="sticky-anchor" id={"#testing-procedures"} href={"#testing-procedures"}>Testing Procedures</a>
+
+Atlas's testing framework allows you to write unit tests for your procedures. The following example demonstrates how
+to write tests for a stored procedure, `archive_old_sales`, that moves old sales from the `sales` table to the `archive_sales` table according to a specified cutoff date.
+For more detail, read the [schema testing docs](/testing/schema)
+or see the [full example](/guides/testing/procedures).
+
+<Tabs>
+<TabItem label="Simple Test" value="simple">
+
+```hcl title="schema.test.hcl"
+test "schema" "procedure" {
+  # Seed data
+  exec {
+    sql = <<-SQL
+      INSERT INTO sales (id, sale_amount, sale_date) VALUES
+      (1, 150.00, '2024-07-18'),
+      (2, 200.00, '2024-06-20'),
+      (1, 350.00, '2024-07-10');
+    SQL
+  }
+  # Execute the procedure with a specific cutoff date
+  exec {
+    sql = "CALL archive_old_sales('2024-07-18')"  # Archive sales before this date
+  }
+  # Verify data in archive_sales table
+  exec {
+    sql = "SELECT COUNT(*) FROM archive_sales WHERE sale_date < '2024-07-18'"
+    output = "2" # Expect 2 archived sales
+  }
+  # Verify data in sales table
+  exec {
+    sql = "SELECT COUNT(*) FROM sales"
+    output = "1"  # Expect 1 sale remaining in the sales table after cutoff date
+  }
+}
+```
+
+</TabItem>
+<TabItem label="Table-driven Test" value="table-driven">
+
+```hcl title="schema.test.hcl"
+test "schema" "procedure" {
+  # Seed data
+  exec {
+    sql = <<-SQL
+      INSERT INTO sales (id, sale_amount, sale_date) VALUES
+      (1, 150.00, '2024-07-18'),
+      (2, 200.00, '2024-06-20'),
+      (1, 350.00, '2024-07-10');
+    SQL
+  }
+  for_each = [
+    {cutoff_date: "2024-07-18", expected_archived: "2", expected_remaining: "1"},
+    {cutoff_date: "2024-08-01", expected_archived: "3", expected_remaining: "0"}
+  ]
+  # Execute the procedure with the current test case cutoff date
+  exec {
+    sql = "CALL archive_old_sales('${each.value.cutoff_date}')"
+  }
+  # Verify data in archive_sales table
+  exec {
+    sql = "SELECT COUNT(*) FROM archive_sales WHERE sale_date < '${each.value.cutoff_date}'"
+    output = each.value.expected_archived
+  }
+  # Verify data in sales table
+  exec {
+    sql = "SELECT COUNT(*) FROM sales"
+    output = each.value.expected_remaining
+  }
+  log {
+    message = "Testing cutoff date:  ${each.value.cutoff_date} - Expected Archived: ${each.value.expected_archived}, Expected Remaining: ${each.value.expected_remaining}"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+:::
+
+
 ## Domain
 
-:::info LOGIN REQUIRED
-Domains are currently available to logged-in users only. To use this feature, run:
+:::info [Atlas Pro Feature](/features#pro-plan)
+Domains are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
 ```
 atlas login
 ```
@@ -1640,10 +1842,70 @@ schema "public" {
 ```
 
 
+:::info <a class="sticky-anchor" id={"#testing-domains"} href={"#testing-domains"}>Testing Domains</a>
+
+Atlas's testing framework allows you to write unit tests for your domains. The following example demonstrates how
+to write tests for the `us_postal_code` domain defined above. For more detail, read the [schema testing docs](/testing/schema)
+or see the [full example](/guides/testing/domains).
+
+
+<Tabs>
+<TabItem label="Simple Test" value="simple">
+
+```hcl title="schema.test.hcl"
+test "schema" "postal" {
+  parallel = true
+  exec {
+    sql = "select '12345'::us_postal_code"
+  }
+  catch {
+    sql = "select 'hello'::us_postal_code"
+  }
+}
+```
+
+</TabItem>
+<TabItem label="Table-driven Test" value="table-driven">
+
+```hcl title="schema.hcl"
+test "schema" "us_postal_code_check_valid" {
+  parallel = true
+  for_each = [
+    {input = "12345", expected = "valid"},
+    {input = "12345-6789", expected = "valid"},
+  ]
+  log {
+    message = "Testing postal code: ${each.value.input} -> Expected: ${each.value.expected}"
+  }
+  exec {
+    sql = "SELECT '${each.value.input}'::us_postal_code"
+  }
+}
+
+test "schema" "us_postal_code_check_invalid" {
+  parallel = true
+  for_each = [
+    {input = "hello", expected = "invalid"},
+    {input = "123", expected = "invalid"},
+  ]
+  log {
+    message = "Testing postal code: ${each.value.input} -> Expected: ${each.value.expected}"
+  }
+  catch {
+    sql = "SELECT '${each.value.input}'::us_postal_code"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+:::
+
 ## Composite Type
 
-:::info LOGIN REQUIRED
-Composite types are currently available to logged-in users only. To use this feature, run:
+:::info [Atlas Pro Feature](/features#pro-plan)
+Composite types are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
 ```
 atlas login
 ```
@@ -1674,10 +1936,58 @@ schema "public" {
 }
 ```
 
+## Policies {#row-level-security-policy}
+
+:::info [Atlas Pro Feature](/features#pro-plan)
+Policies are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
+```
+atlas login
+```
+:::
+
+The `policy` block allows defining [row-level security policies](https://www.postgresql.org/docs/current/ddl-rowsecurity.html). Supported by PostgreSQL.
+
+```hcl title="schema.pg.hcl"
+policy "sales_rep_access" {
+  on    = table.orders
+  for   = SELECT
+  to    = [PUBLIC]
+  using = "(sales_rep_id = (CURRENT_USER)::integer)"
+}
+
+policy "restrict_sales_rep_updates" {
+  on      = table.orders
+  as      = RESTRICTIVE
+  for     = UPDATE
+  to      = ["custom_role"]
+  check   = "(sales_rep_id = (CURRENT_USER)::integer)"
+  comment = "This is a restrictive policy"
+}
+```
+
+:::note Enabling Row-Level Security
+To enable and force row-level security on a table, refer to the [table row-level security](#row-level-security) example.
+:::
+
+### Computed Policies
+
+To configure the same policy for multiple tables, users can utilize the `for_each` meta-argument. By setting it
+up, a `policy` block will be computed for each item in the provided value. Note that `for_each` accepts either a `map`
+or a `set` of references.
+
+```hcl title="schema.pg.hcl" {2-3}
+policy "tenant_access_policy" {
+  for_each = [table.users, table.orders, table.payments]
+  on       = each.value
+  as       = RESTRICTIVE
+  using    = "tenant_isolation_policy()"
+}
+```
+
 ## Sequence
 
-:::info LOGIN REQUIRED
-Sequences are currently available to logged-in users only. To use this feature, run:
+:::info [Atlas Pro Feature](/features#pro-plan)
+Sequences are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
 ```
 atlas login
 ```
@@ -1816,8 +2126,8 @@ table "t2" {
 
 ## Extension
 
-:::info LOGIN REQUIRED
-Extensions are currently available to logged-in users only. To use this feature, run:
+:::info [Atlas Pro Feature](/features#pro-plan)
+Extensions are currently available only to [Atlas Pro users](/features#pro-plan). To use this feature, run:
 ```
 atlas login
 ```

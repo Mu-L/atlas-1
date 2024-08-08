@@ -368,7 +368,7 @@ func (s *State) Eval(parsed *hclparse.Parser, v any, input map[string]cty.Value)
 		blocks := make([]*hclsyntax.Block, 0, len(metaBlocks))
 		for name, bs := range metaBlocks {
 			for _, b := range bs {
-				nb, err := forEachBlocks(ctx, b)
+				nb, err := s.forEachBlocks(ctx, b)
 				if err != nil {
 					return err
 				}
@@ -849,18 +849,32 @@ func (s *State) writeAttr(attr *Attr, body *hclwrite.Body) error {
 		}
 		tokens := make([]hclwrite.Tokens, 0, attr.V.LengthInt())
 		for _, v := range attr.V.AsValueSlice() {
-			if v.Type().IsCapsuleType() {
-				ref, ok := v.EncapsulatedValue().(*Ref)
-				if !ok {
-					return fmt.Errorf("unsupported capsule type: %v", v.Type())
-				}
-				ts, err := hclRefTokens(ref.V)
+			if !v.Type().IsCapsuleType() {
+				tokens = append(tokens, hclwrite.TokensForValue(v))
+				continue
+			}
+			switch ev := v.EncapsulatedValue().(type) {
+			case *Ref:
+				ts, err := hclRefTokens(ev.V)
 				if err != nil {
 					return err
 				}
 				tokens = append(tokens, ts)
-			} else {
-				tokens = append(tokens, hclwrite.TokensForValue(v))
+			case *EnumString:
+				switch {
+				case ev.S != "" && ev.E != "":
+					return fmt.Errorf("enum string cannot have both a string and an expression, got: %#v", ev)
+				case ev.S != "":
+					tokens = append(tokens, hclwrite.TokensForValue(cty.StringVal(ev.S)))
+				case ev.E != "":
+					tokens = append(tokens, hclwrite.Tokens{
+						&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(ev.E)},
+					})
+				default:
+					return fmt.Errorf("enum string must have either a string or an expression, got: %#v", ev)
+				}
+			default:
+				return fmt.Errorf("unsupported capsule type: %v", v.Type())
 			}
 		}
 		body.SetAttributeRaw(attr.K, hclList(tokens))
@@ -1006,7 +1020,7 @@ func hclList(items []hclwrite.Tokens) hclwrite.Tokens {
 	return t
 }
 
-func forEachBlocks(ctx *hcl.EvalContext, b *hclsyntax.Block) ([]*hclsyntax.Block, error) {
+func (s *State) forEachBlocks(ctx *hcl.EvalContext, b *hclsyntax.Block) ([]*hclsyntax.Block, error) {
 	forEach, diags := b.Body.Attributes[forEachAttr].Expr.Value(ctx)
 	if diags.HasErrors() {
 		return nil, diags
@@ -1025,7 +1039,7 @@ func forEachBlocks(ctx *hcl.EvalContext, b *hclsyntax.Block) ([]*hclsyntax.Block
 				"value": v,
 			}),
 		}
-		nb, err := copyBlock(nctx, b)
+		nb, err := s.copyBlock(nctx, b, []string{b.Type})
 		if err != nil {
 			return nil, fmt.Errorf("schemahcl: evaluate block for value %q: %w", v, err)
 		}
@@ -1034,7 +1048,7 @@ func forEachBlocks(ctx *hcl.EvalContext, b *hclsyntax.Block) ([]*hclsyntax.Block
 	return blocks, nil
 }
 
-func copyBlock(ctx *hcl.EvalContext, b *hclsyntax.Block) (*hclsyntax.Block, error) {
+func (s *State) copyBlock(ctx *hcl.EvalContext, b *hclsyntax.Block, scope []string) (*hclsyntax.Block, error) {
 	nb := &hclsyntax.Block{
 		Type:      b.Type,
 		Labels:    b.Labels,
@@ -1045,7 +1059,7 @@ func copyBlock(ctx *hcl.EvalContext, b *hclsyntax.Block) (*hclsyntax.Block, erro
 		},
 	}
 	for k, v := range b.Body.Attributes {
-		x, diags := v.Expr.Value(ctx)
+		x, diags := v.Expr.Value(s.mayScopeContext(ctx, append(scope, k)))
 		if diags.HasErrors() {
 			return nil, diags
 		}
@@ -1054,7 +1068,7 @@ func copyBlock(ctx *hcl.EvalContext, b *hclsyntax.Block) (*hclsyntax.Block, erro
 		nb.Body.Attributes[k] = &nv
 	}
 	for _, v := range b.Body.Blocks {
-		nv, err := copyBlock(ctx, v)
+		nv, err := s.copyBlock(ctx, v, append(scope, v.Type))
 		if err != nil {
 			return nil, err
 		}
