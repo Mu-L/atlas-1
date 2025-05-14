@@ -48,6 +48,10 @@ type (
 		// resources on inspection.
 		Exclude []string `spec:"exclude"`
 
+		// Include defines a list of glob patterns used to keep
+		// resources on inspection.
+		Include []string `spec:"include"`
+
 		// Schema containing the schema configuration of the env.
 		Schema *Schema `spec:"schema"`
 
@@ -170,6 +174,7 @@ type (
 		ModifyTrigger    bool `spec:"modify_trigger"`
 		RenameTrigger    bool `spec:"rename_trigger"`
 		RenameConstraint bool `spec:"rename_constraint"`
+		schemahcl.DefaultExtension
 	}
 
 	// Format represents the output formatting configuration of an environment.
@@ -419,6 +424,14 @@ func (d *Diff) Extend(global *Diff) *Diff {
 func (d *Diff) Options() (opts []schema.DiffOption) {
 	// Per-driver configuration.
 	opts = append(opts, func(opts *schema.DiffOptions) {
+		if d.SkipChanges != nil && d.SkipChanges.Remain() != nil {
+			d.DefaultExtension.Extra.Children = append(
+				d.DefaultExtension.Extra.Children,
+				&schemahcl.Resource{
+					Type:  "skip",
+					Attrs: d.SkipChanges.Remain().Attrs,
+				})
+		}
 		opts.Extra = d.DefaultExtension
 	})
 	if d.SkipChanges == nil {
