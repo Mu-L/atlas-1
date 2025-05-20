@@ -1020,6 +1020,39 @@ attr2 = "b"
 	require.NoError(t, err)
 	require.Equal(t, 3, cv.nb)
 	require.Equal(t, 2, cv.na)
+
+}
+
+type errValidator struct{ err error }
+
+func (e *errValidator) Err() error { return e.err }
+func (*errValidator) ValidateBody(*hcl.EvalContext, *hclsyntax.Body) (func() error, error) {
+	return func() error { return nil }, nil
+}
+func (*errValidator) ValidateBlock(*hcl.EvalContext, *hclsyntax.Block) (func() error, error) {
+	return func() error { return nil }, nil
+}
+func (*errValidator) ValidateAttribute(*hcl.EvalContext, *hclsyntax.Attribute, cty.Value) error {
+	return nil
+}
+
+func TestSchemaValidator_Err(t *testing.T) {
+	var (
+		ev = &errValidator{
+			err: fmt.Errorf("validation error"),
+		}
+		doc struct {
+			DefaultExtension
+		}
+	)
+	err := New(
+		WithSchemaValidator(func() SchemaValidator {
+			return ev
+		}),
+	).EvalBytes([]byte(`
+hello = world
+`), &doc, nil)
+	require.EqualError(t, err, "validation error\n:2,9-14: Unknown variable; There is no variable named \"world\".")
 }
 
 func Test_ExtraReferences(t *testing.T) {
@@ -1259,4 +1292,67 @@ func TestUseTraversal(t *testing.T) {
 		})
 		require.Equal(t, tt.want, got)
 	}
+}
+
+func TestEscapeHeredoc(t *testing.T) {
+	type (
+		Attr struct {
+			K string `spec:",name"`
+			V string `spec:"value"`
+		}
+		Block struct {
+			Attrs []*Attr `spec:"attr"`
+		}
+		doc struct {
+			Blocks []*Block `spec:"block"`
+		}
+	)
+	v := &doc{
+		Blocks: []*Block{
+			{
+				Attrs: []*Attr{
+					{
+						K: "inline",
+						V: "Hello ${username}, welcome! %{ if true }you're in%{ endif }",
+					},
+					{
+						K: "multiline",
+						V: `<<-TEXT
+ Hello ${username}, welcome! %{ if true }you're in%{ endif }
+ ${{text}}, ${{ text }}, ${{- text -}}
+ $${{text}}, %%%{text}
+TEXT`,
+					},
+				},
+			},
+		},
+	}
+	buf, err := Marshal(v)
+	require.NoError(t, err)
+	require.Equal(t, `block {
+  attr "inline" {
+    value = "Hello $${username}, welcome! %%{ if true }you're in%%{ endif }"
+  }
+  attr "multiline" {
+    value = <<-TEXT
+ Hello $${username}, welcome! %%{ if true }you're in%%{ endif }
+ $${{text}}, $${{ text }}, $${{- text -}}
+ $$${{text}}, %%%%{text}
+TEXT
+  }
+}
+`, string(buf))
+	var got doc
+	require.NoError(t, New().EvalBytes(buf, &got, nil))
+	require.Equal(t,
+		"Hello ${username}, welcome! %{ if true }you're in%{ endif }",
+		got.Blocks[0].Attrs[0].V,
+	)
+	require.Equal(t,
+		`Hello ${username}, welcome! %{ if true }you're in%{ endif }
+${{text}}, ${{ text }}, ${{- text -}}
+$${{text}}, %%%{text}
+`,
+		got.Blocks[0].Attrs[1].V,
+	)
 }

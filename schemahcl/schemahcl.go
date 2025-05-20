@@ -7,6 +7,7 @@ package schemahcl
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -438,7 +439,7 @@ func (s *State) EvalOptions(parsed *hclparse.Parser, v any, opts *EvalOptions) e
 		file := files[name]
 		r, err := s.resource(ctx, opts, file, reg)
 		if err != nil {
-			return err
+			return errors.Join(vr.Err(), err)
 		}
 		spec.Children = append(spec.Children, r.Children...)
 		spec.Attrs = append(spec.Attrs, r.Attrs...)
@@ -931,7 +932,7 @@ func (s *State) writeAttr(attr *Attr, body *hclwrite.Body) error {
 			body.SetAttributeRaw(attr.K, hclwrite.Tokens{
 				&hclwrite.Token{
 					Type:  hclsyntax.TokenOHeredoc,
-					Bytes: []byte(attr.V.AsString()),
+					Bytes: escapedHeredoc(attr.V.AsString()),
 				},
 			})
 		} else {
@@ -941,6 +942,22 @@ func (s *State) writeAttr(attr *Attr, body *hclwrite.Body) error {
 		body.SetAttributeValue(attr.K, attr.V)
 	}
 	return nil
+}
+
+// escapedHeredoc escapes template introducer symbol when marshaling heredoc.
+// See: hcl/hclwrite#escapeQuotedStringLit for reference.
+func escapedHeredoc(s string) []byte {
+	var b bytes.Buffer
+	for i, r := range s {
+		switch r {
+		case '$', '%':
+			if i < len(s)-1 && s[i+1] == '{' {
+				b.WriteRune(r)
+			}
+		}
+		b.WriteRune(r)
+	}
+	return b.Bytes()
 }
 
 func (s *State) findTypeSpec(t string) (*TypeSpec, bool) {
